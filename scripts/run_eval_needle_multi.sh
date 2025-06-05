@@ -6,7 +6,7 @@ cd $PROJECT_DIR
 export PYTHONPATH="$PYTHONPATH:$PROJECT_DIR"
 
 export llama_tokenizer_path="LargeWorldModel/LWM-Text-1M"
-export lwm_text_checkpoint="/content/drive/MyDrive/llama_models/Llama_375M/checkpoint-64434"
+export lwm_text_checkpoint="/content/drive/MyDrive/llama_models/Llama_375M/checkpoint-64434/model.safetensors"
 # jsonl file containing text for haystack. Each line should be a json
 # with a single key "text" containing the text.
 export haystack_file="/content/drive/MyDrive/data/pg19_subset.jsonl"
