@@ -341,7 +341,7 @@ class Sampler:
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-            
+
         self.sharded_rng = next_rng()
         self._load_model()
 
@@ -404,7 +404,10 @@ class Sampler:
         # 如果模型参数结构需要转换，写在这里（视你权重格式而定）
         params = {k: jnp.array(v) for k, v in params.items()}
 
-        self.params = params
+        self.params = {'params': params} 
+        print("Loaded params keys:", params.keys())
+        print("Self.params keys after wrapping:", self.params.keys())
+
 
         self.model_ps = match_partition_rules(
             LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
