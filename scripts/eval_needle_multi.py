@@ -82,15 +82,9 @@ class LLMNeedleHaystackTester:
                  print_ongoing_status = True):
         needle="\nThe special magic {city} number is: {rnd_number}\n"
         self.needle = needle
-
-        print("needle:", needle)
-        print("haystack_file:", haystack_file)
-        print("retrieval_question:", retrieval_question)
-
         if not needle or not haystack_file or not retrieval_question:
             raise ValueError("Needle, haystack, and retrieval_question must be provided.")
 
-        
         self.rnd_number_digits = rnd_number_digits
         self.context_lengths_num_intervals = context_lengths_num_intervals
         self.document_depth_percent_intervals = document_depth_percent_intervals
