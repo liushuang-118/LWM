@@ -334,9 +334,8 @@ class Sampler:
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
             max_new_tokens=self.block_size,
-            prng_key=rng,
             do_sample=False,
-        ).sequences
+        )
         return output, rng
 
     def __call__(self, prompts, max_input_length=512):
