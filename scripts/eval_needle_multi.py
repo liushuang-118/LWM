@@ -21,7 +21,7 @@ from tux import (
     with_sharding_constraint, tree_apply, open_file
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
-from transformers import AutoTokenizer, FlaxLlamaForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -319,7 +319,7 @@ class LLMNeedleHaystackTester:
 class Sampler:
     def __init__(self, model_path, tokenizer_name, block_size=2048):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.model = FlaxLlamaForCausalLM.from_pretrained(model_path, from_pt=True)
+        self.model = AutoModelForCausalLM.from_pretrained(model_path)
         self.sharded_rng = jax.random.PRNGKey(0)
         self.block_size = block_size  # 保留给其它方法用
 
