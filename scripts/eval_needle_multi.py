@@ -319,26 +319,14 @@ class LLMNeedleHaystackTester:
 class Sampler:
     def __init__(self, model_path, tokenizer_name, block_size=2048):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(model_path)
         self.sharded_rng = jax.random.PRNGKey(0)
-        self.block_size = block_size  # 保留给其它方法用
-
-    @property
-    def data_dim(self):
-        return 1
-
-    def _forward_generate(self, params, rng, batch):
-        # 简单封装，直接用transformers自带的generate
-        output = self.model.generate(
-            input_ids=batch['input_ids'],
-            attention_mask=batch['attention_mask'],
-            max_new_tokens=self.block_size,
-            prng_key=rng,
-            do_sample=False,
-        ).sequences
-        return output, rng  # rng没变，或者用jax.random.split更新
+        self.block_size = block_size
 
     def __call__(self, prompts, max_input_length=512):
+        max_input_length = min(max_input_length, self.block_size)
         inputs = self.tokenizer(
             prompts,
             padding='max_length',
@@ -353,7 +341,6 @@ class Sampler:
         output_ids, self.sharded_rng = self._forward_generate(self.model.params, self.sharded_rng, batch)
         output_texts = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         return output_texts
-
 
 def main(argv):
     #JaxDistributedConfig.initialize(FLAGS.jax_distributed)
