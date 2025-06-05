@@ -24,5 +24,5 @@ python3 -u scripts/eval_needle_multi.py \
     --n_document_depth_intervals=10 \
     --n_needles_total=4 \
     --n_needles_retrieve=2 \
-    --n_rounds=10
+    --n_rounds=1
 read
