@@ -6,11 +6,11 @@ cd $PROJECT_DIR
 export PYTHONPATH="$PYTHONPATH:$PROJECT_DIR"
 
 export llama_tokenizer_path="LargeWorldModel/LWM-Text-1M"
-export lwm_text_checkpoint=""
+export lwm_text_checkpoint="/content/drive/MyDrive/llama_models/Llama_375M/checkpoint-64434"
 # jsonl file containing text for haystack. Each line should be a json
 # with a single key "text" containing the text.
-export haystack_file=""
-export output_file=""
+export haystack_file="/content/drive/MyDrive/data/pg19_subset.jsonl"
+export output_file="/content/LWM/output.json"
 
 python3 -u scripts/eval_needle_multi.py \
     --mesh_dim='!1,1,-1,1' \
