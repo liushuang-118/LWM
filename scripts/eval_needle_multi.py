@@ -21,9 +21,6 @@ from tux import (
     with_sharding_constraint, tree_apply, open_file
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
-from safetensors import safe_open
-import jax.numpy as jnp
-import re
 
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
@@ -323,88 +320,13 @@ class LLMNeedleHaystackTester:
             self.print_start_test_summary()
         self.run_test()
 
-def load_safetensors_jax(path):
-        tensors = {}
-        with safe_open(path, framework="np") as f:
-            for k in f.keys():
-                np_tensor = f.get_tensor(k)
-                tensors[k] = jnp.array(np_tensor)
-        return tensors
 
-def convert_flat_params_to_flax(params_flat):
-    params_nested = {}
-
-    def set_in_dict(d, keys, value):
-        for k in keys[:-1]:
-            if k not in d:
-                d[k] = {}
-            d = d[k]
-        d[keys[-1]] = value
-
-    for k, v in params_flat.items():
-        # k 样例： 'model.embed_tokens.weight', 'model.layers.0.input_layernorm.weight', ...
-        # 替换 key，映射到 Flax 模型期望的结构
-
-        # 1. 把 model.embed_tokens.weight -> transformer.wte.embedding
-        if k == 'model.embed_tokens.weight':
-            new_key = 'transformer.wte.embedding'
-
-        # 2. 把 model.layers.N.xxx.weight -> transformer.layers.N.xxx.kernel
-        #    把 .weight 改成 .kernel (Flax里线性层权重通常叫 kernel)
-        #    .bias 保持不变
-        elif k.startswith('model.layers.'):
-            # 转成列表方便操作
-            parts = k.split('.')
-            layer_num = parts[2]
-            rest = parts[3:]
-            # weight->kernel，bias->bias
-            if rest[-1] == 'weight':
-                rest[-1] = 'kernel'
-            elif rest[-1] == 'bias':
-                rest[-1] = 'bias'
-
-            new_key = ['transformer', 'layers', int(layer_num)] + rest
-
-        # 3. 其他层，如 final layernorm等，也做相应改名
-        elif k.startswith('model.final_layernorm.'):
-            # 比如 model.final_layernorm.weight -> transformer.norm.scale
-            # 具体要看模型定义，我这里示例
-            suffix = k[len('model.final_layernorm.'):]
-            if suffix == 'weight':
-                new_key = 'transformer.norm.scale'
-            elif suffix == 'bias':
-                new_key = 'transformer.norm.bias'
-            else:
-                new_key = 'transformer.norm.' + suffix
-
-        else:
-            # 其它没匹配的先打印调试
-            print(f"WARNING: key not handled: {k}")
-            new_key = k  # 先原样放进去，后面再处理
-
-        # 把 new_key 从字符串变成路径列表
-        if isinstance(new_key, str):
-            keys = new_key.split('.')
-        else:
-            keys = new_key
-
-        # 设置到嵌套字典
-        set_in_dict(params_nested, keys, jnp.array(v))
-
-    return params_nested
 
 class Sampler:
     def __init__(self):
         self.mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
         self.prefix_tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer, truncation_side='left', padding_side='left')
         self.tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer)
-        # 这里设置 pad_token，避免后面调用时报错
-        if self.prefix_tokenizer.pad_token is None:
-            self.prefix_tokenizer.pad_token = self.prefix_tokenizer.eos_token
-        
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-
         self.sharded_rng = next_rng()
         self._load_model()
 
@@ -416,7 +338,6 @@ class Sampler:
     @property
     def data_dim(self):
         return self.mesh.shape['dp'] * self.mesh.shape['fsdp']
-
 
     def _load_model(self):
         if FLAGS.load_llama_config != '':
@@ -444,44 +365,26 @@ class Sampler:
         llama_config.update(dict(mesh_dim=FLAGS.mesh_dim))
         self.config = llama_config
 
-        # 初始化模型，但不初始化参数
-        self.model = FlaxLLaMAForCausalLM(
-            llama_config,
-            input_shape=(512, self.block_size),
-            seed=FLAGS.seed,
-            _do_init=False,
-            dtype=get_float_dtype_by_name(FLAGS.dtype),
-        )
+        with jax.default_device(jax.devices("cpu")[0]):
+            _, self.params = StreamingCheckpointer.load_trainstate_checkpoint(
+                    FLAGS.load_checkpoint, disallow_trainstate=True, max_buffer_size=32 * 2 ** 30
+            )
+            self.model = FlaxLLaMAForCausalLM(
+                llama_config,
+                input_shape=(512, self.block_size),
+                seed=FLAGS.seed,
+                _do_init=False,
+                dtype=get_float_dtype_by_name(FLAGS.dtype),
+            )
+            self.model_ps = match_partition_rules(
+                LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
+            )
+            shard_fns, _ = make_shard_and_gather_fns(
+                self.model_ps, get_float_dtype_by_name(FLAGS.dtype)
+            )
 
-        weight_path = FLAGS.load_checkpoint
-
-        if weight_path.startswith("params::"):
-            weight_path = weight_path[len("params::"):]
-        print("Corrected weight path:", weight_path)
-        if not os.path.exists(weight_path):
-            raise FileNotFoundError(f"weight file {weight_path} doesnt exist")
-
-        # 使用自定义的加载函数
-        params = load_safetensors_jax(weight_path)
-
-        # 如果模型参数结构需要转换，写在这里（视你权重格式而定）
-        params = {k: jnp.array(v) for k, v in params.items()}
-        params_nested = convert_flat_params_to_flax(params)
-        self.params = {'params': params_nested}
-        
-        print("Loaded params keys:", params.keys())
-        print("Self.params keys after wrapping:", self.params.keys())
-
-
-        self.model_ps = match_partition_rules(
-            LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
-        )
-        shard_fns, _ = make_shard_and_gather_fns(
-            self.model_ps, get_float_dtype_by_name(FLAGS.dtype)
-        )
-
-        with self.mesh:
-            self.params = tree_apply(shard_fns, self.params)
+            with self.mesh:
+                self.params = tree_apply(shard_fns, self.params)
 
     @cached_property
     def _forward_generate(self):
