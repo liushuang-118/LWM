@@ -293,8 +293,13 @@ class LLMNeedleHaystackTester:
                     })
                     print(results[-1]['correct'], out, rnd_nums_to_retrieve)
                 if jax.process_index() == 0:
-                    with open_file(FLAGS.output_file, 'w', encoding='utf-8') as f:
-                        json.dump(results, f, ensure_ascii=False, indent=2)
+                    if FLAGS.output_file.startswith('gs://'):
+                            fs = gcsfs.GCSFileSystem()
+                            with fs.open(FLAGS.output_file, 'w') as f:
+                                f.write(json.dumps(results, ensure_ascii=False, indent=2))
+                    else:
+                        with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
+                            json.dump(results, f, ensure_ascii=False, indent=2)
                 pbar.update(len(contexts_i))
             pbar.close()
         print('elapsed', time.time() - start)
