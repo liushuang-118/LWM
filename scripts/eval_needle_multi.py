@@ -23,6 +23,7 @@ from tux import (
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from safetensors import safe_open
 import jax.numpy as jnp
+import re
 
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
@@ -330,6 +331,68 @@ def load_safetensors_jax(path):
                 tensors[k] = jnp.array(np_tensor)
         return tensors
 
+def convert_flat_params_to_flax(params_flat):
+    params_nested = {}
+
+    def set_in_dict(d, keys, value):
+        for k in keys[:-1]:
+            if k not in d:
+                d[k] = {}
+            d = d[k]
+        d[keys[-1]] = value
+
+    for k, v in params_flat.items():
+        # k 样例： 'model.embed_tokens.weight', 'model.layers.0.input_layernorm.weight', ...
+        # 替换 key，映射到 Flax 模型期望的结构
+
+        # 1. 把 model.embed_tokens.weight -> transformer.wte.embedding
+        if k == 'model.embed_tokens.weight':
+            new_key = 'transformer.wte.embedding'
+
+        # 2. 把 model.layers.N.xxx.weight -> transformer.layers.N.xxx.kernel
+        #    把 .weight 改成 .kernel (Flax里线性层权重通常叫 kernel)
+        #    .bias 保持不变
+        elif k.startswith('model.layers.'):
+            # 转成列表方便操作
+            parts = k.split('.')
+            layer_num = parts[2]
+            rest = parts[3:]
+            # weight->kernel，bias->bias
+            if rest[-1] == 'weight':
+                rest[-1] = 'kernel'
+            elif rest[-1] == 'bias':
+                rest[-1] = 'bias'
+
+            new_key = ['transformer', 'layers', int(layer_num)] + rest
+
+        # 3. 其他层，如 final layernorm等，也做相应改名
+        elif k.startswith('model.final_layernorm.'):
+            # 比如 model.final_layernorm.weight -> transformer.norm.scale
+            # 具体要看模型定义，我这里示例
+            suffix = k[len('model.final_layernorm.'):]
+            if suffix == 'weight':
+                new_key = 'transformer.norm.scale'
+            elif suffix == 'bias':
+                new_key = 'transformer.norm.bias'
+            else:
+                new_key = 'transformer.norm.' + suffix
+
+        else:
+            # 其它没匹配的先打印调试
+            print(f"WARNING: key not handled: {k}")
+            new_key = k  # 先原样放进去，后面再处理
+
+        # 把 new_key 从字符串变成路径列表
+        if isinstance(new_key, str):
+            keys = new_key.split('.')
+        else:
+            keys = new_key
+
+        # 设置到嵌套字典
+        set_in_dict(params_nested, keys, jnp.array(v))
+
+    return params_nested
+
 class Sampler:
     def __init__(self):
         self.mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
@@ -403,8 +466,9 @@ class Sampler:
 
         # 如果模型参数结构需要转换，写在这里（视你权重格式而定）
         params = {k: jnp.array(v) for k, v in params.items()}
-
-        self.params = {'params': params} 
+        params_nested = convert_flat_params_to_flax(params)
+        self.params = {'params': params_nested}
+        
         print("Loaded params keys:", params.keys())
         print("Self.params keys after wrapping:", self.params.keys())
 
