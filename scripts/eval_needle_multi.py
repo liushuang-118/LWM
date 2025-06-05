@@ -356,7 +356,7 @@ class Sampler:
 
 
 def main(argv):
-    JaxDistributedConfig.initialize(FLAGS.jax_distributed)
+    #JaxDistributedConfig.initialize(FLAGS.jax_distributed)
     set_random_seed(FLAGS.seed)
 
     ht = LLMNeedleHaystackTester(
