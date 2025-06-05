@@ -13,11 +13,7 @@ export haystack_file="/content/drive/MyDrive/data/pg19_subset.jsonl"
 export output_file="/content/LWM/output.json"
 
 python3 -u scripts/eval_needle_multi.py \
-    --mesh_dim='!1,1,-1,1' \
-    --dtype='fp32' \
-    --load_llama_config='7b' \
-    --update_llama_config="dict(theta=10000000,max_sequence_length=131072,scan_attention=True,scan_query_chunk_size=1024,scan_key_chunk_size=1024,scan_mlp=True,scan_mlp_chunk_size=1024,scan_layers=True)" \
-    --load_checkpoint="params::$lwm_text_checkpoint" \
+    --load_checkpoint="$lwm_text_checkpoint" \
     --tokenizer="$llama_tokenizer_path" \
     --max_tokens_per_batch=5000 \
     --output_file="$output_file" \

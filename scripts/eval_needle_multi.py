@@ -35,15 +35,15 @@ FLAGS, FLAGS_DEF = define_flags_with_default(
     n_needles_total=4,
     n_needles_retrieve=4,
     seed=1234,
-    mesh_dim='1,-1,1,1',
-    dtype='fp32',
-    load_llama_config='',
-    update_llama_config='',
+    # mesh_dim='1,-1,1,1',
+    # dtype='fp32',
+    # load_llama_config='',
+    # update_llama_config='',
     load_checkpoint='',
     tokenizer='LargeWorldModel/LWM-Text-1M',
-    checkpointer=StreamingCheckpointer.get_default_config(),
-    llama=LLaMAConfig.get_default_config(),
-    jax_distributed=JaxDistributedConfig.get_default_config(),
+    # checkpointer=StreamingCheckpointer.get_default_config(),
+    # llama=LLaMAConfig.get_default_config(),
+    # jax_distributed=JaxDistributedConfig.get_default_config(),
 )
 
 
@@ -106,7 +106,7 @@ class LLMNeedleHaystackTester:
             raise ValueError(f"Unsupported document_depth_percent_interval_type: {document_depth_percent_interval_type}")
         self.document_depth_percents = self.document_depth_percents.tolist()
 
-        self.model = Sampler()
+        self.model = Sampler(model_path=FLAGS.load_checkpoint, tokenizer_name=FLAGS.tokenizer)
 
         self.enc = AutoTokenizer.from_pretrained(FLAGS.tokenizer)
         self.enc_tiktoken = tiktoken.encoding_for_model("gpt-4-1106-preview")
@@ -317,7 +317,7 @@ class LLMNeedleHaystackTester:
 
 
 class Sampler:
-    def __init__(self, model_path, tokenizer_name, block_size=128):
+    def __init__(self, model_path, tokenizer_name, block_size=2048):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.model = FlaxLlamaForCausalLM.from_pretrained(model_path, from_pt=True)
         self.sharded_rng = jax.random.PRNGKey(0)
@@ -325,8 +325,7 @@ class Sampler:
 
     @property
     def data_dim(self):
-        # 如果你不需要分布式mesh相关的，可以返回固定值或None
-        return None
+        return 1
 
     def _forward_generate(self, params, rng, batch):
         # 简单封装，直接用transformers自带的generate
