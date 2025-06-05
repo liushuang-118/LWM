@@ -329,7 +329,7 @@ class Sampler:
     def data_dim(self):
         return 1
 
-    def _forward_generate(self, params, rng, batch):  
+    def _forward_generate(self, rng, batch):  
         output = self.model.generate(
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
@@ -352,7 +352,7 @@ class Sampler:
             'input_ids': inputs.input_ids,
             'attention_mask': inputs.attention_mask,
         }
-        output_ids, self.sharded_rng = self._forward_generate(self.model.params, self.sharded_rng, batch)
+        output_ids, self.sharded_rng = self._forward_generate(self.model, self.sharded_rng, batch)
         output_texts = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         return output_texts
 
