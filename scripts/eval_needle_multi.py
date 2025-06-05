@@ -329,7 +329,7 @@ class Sampler:
     def data_dim(self):
         return 1
 
-    def _forward_generate(self, rng, batch):  
+    def _forward_generate(self, model, rng, batch):  
         output = self.model.generate(
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
@@ -340,18 +340,22 @@ class Sampler:
         return output, rng
 
     def __call__(self, prompts, max_input_length=512):
+        # 限制输入最大长度不能超过模型的 block_size（例如 2048）
         max_input_length = min(max_input_length, self.block_size)
+
         inputs = self.tokenizer(
             prompts,
-            padding='max_length',
-            truncation=True,
-            max_length=max_input_length,
-            return_tensors='np'
+            padding='max_length',          # 补齐到 max_length
+            truncation=True,               # 超长部分截断
+            max_length=max_input_length,   # 最大输入长度（不能超过模型支持的最大长度）
+            return_tensors='pt'            # 返回 PyTorch tensor
         )
+
         batch = {
             'input_ids': inputs.input_ids,
             'attention_mask': inputs.attention_mask,
         }
+
         output_ids, self.sharded_rng = self._forward_generate(self.model, self.sharded_rng, batch)
         output_texts = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         return output_texts
