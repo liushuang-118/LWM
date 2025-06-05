@@ -385,6 +385,10 @@ class Sampler:
         )
 
         weight_path = FLAGS.load_checkpoint
+
+        if weight_path.startswith("params::"):
+            weight_path = weight_path[len("params::"):]
+        print("Corrected weight path:", weight_path)
         if not os.path.exists(weight_path):
             raise FileNotFoundError(f"weight file {weight_path} doesnt exist")
 
