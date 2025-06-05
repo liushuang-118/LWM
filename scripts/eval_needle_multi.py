@@ -322,7 +322,13 @@ class LLMNeedleHaystackTester:
             self.print_start_test_summary()
         self.run_test()
 
-
+def load_safetensors_jax(path):
+        tensors = {}
+        with safe_open(path, framework="np") as f:
+            for k in f.keys():
+                np_tensor = f.get_tensor(k)
+                tensors[k] = jnp.array(np_tensor)
+        return tensors
 
 class Sampler:
     def __init__(self):
@@ -341,13 +347,6 @@ class Sampler:
     def data_dim(self):
         return self.mesh.shape['dp'] * self.mesh.shape['fsdp']
 
-    def load_safetensors_jax(path):
-        tensors = {}
-        with safe_open(path, framework="np") as f:
-            for k in f.keys():
-                np_tensor = f.get_tensor(k)
-                tensors[k] = jnp.array(np_tensor)
-        return tensors
 
     def _load_model(self):
         if FLAGS.load_llama_config != '':
