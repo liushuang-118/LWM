@@ -392,7 +392,7 @@ class Sampler:
         params = load_safetensors_jax(weight_path)
 
         # 如果模型参数结构需要转换，写在这里（视你权重格式而定）
-        # params = convert_params(params)
+        params = {k: jnp.array(v) for k, v in params.items()}
 
         self.params = params
 
