@@ -335,6 +335,13 @@ class Sampler:
         self.mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
         self.prefix_tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer, truncation_side='left', padding_side='left')
         self.tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer)
+        # 这里设置 pad_token，避免后面调用时报错
+        if self.prefix_tokenizer.pad_token is None:
+            self.prefix_tokenizer.pad_token = self.prefix_tokenizer.eos_token
+        
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            
         self.sharded_rng = next_rng()
         self._load_model()
 
