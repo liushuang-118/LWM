@@ -21,7 +21,9 @@ from tux import (
     with_sharding_constraint, tree_apply, open_file
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
-from safetensors.jax import load_file
+from safetensors import safe_open
+import jax.numpy as jnp
+
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -339,6 +341,14 @@ class Sampler:
     def data_dim(self):
         return self.mesh.shape['dp'] * self.mesh.shape['fsdp']
 
+    def load_safetensors_jax(path):
+        tensors = {}
+        with safe_open(path, framework="np") as f:
+            for k in f.keys():
+                np_tensor = f.get_tensor(k)
+                tensors[k] = jnp.array(np_tensor)
+        return tensors
+
     def _load_model(self):
         if FLAGS.load_llama_config != '':
             llama_config = LLaMAConfig.load_config(FLAGS.load_llama_config)
@@ -374,18 +384,18 @@ class Sampler:
             dtype=get_float_dtype_by_name(FLAGS.dtype),
         )
 
-        # 用 safetensors 加载权重文件
-        weight_path = FLAGS.load_checkpoint  # 这里传入 model.safetensors 的路径
+        weight_path = FLAGS.load_checkpoint
         if not os.path.exists(weight_path):
             raise FileNotFoundError(f"weight file {weight_path} doesnt exist")
 
-        params = load_file(weight_path)  # 返回一个dict结构
+        # 使用自定义的加载函数
+        params = load_safetensors_jax(weight_path)
 
-        # 这里视你模型权重结构，可能需要将 params 转成 Flax 模型需要的格式
-        # 假设你的 params 是已经对齐的，直接赋值
+        # 如果模型参数结构需要转换，写在这里（视你权重格式而定）
+        # params = convert_params(params)
+
         self.params = params
 
-        # 根据 mesh 和 partition rules 做参数分片
         self.model_ps = match_partition_rules(
             LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
         )
