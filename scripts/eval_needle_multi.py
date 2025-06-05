@@ -21,7 +21,7 @@ from tux import (
     with_sharding_constraint, tree_apply, open_file
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
-
+from transformers import AutoTokenizer, FlaxLlamaForCausalLM
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -317,120 +317,43 @@ class LLMNeedleHaystackTester:
 
 
 class Sampler:
-    def __init__(self):
-        self.mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
-        self.prefix_tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer, truncation_side='left', padding_side='left')
-        self.tokenizer = AutoTokenizer.from_pretrained(FLAGS.tokenizer)
-        self.sharded_rng = next_rng()
-        self._load_model()
-
-    @property
-    def block_size(self):
-        # return 2 * max(self.config.scan_query_chunk_size, self.config.scan_key_chunk_size)
-        return max(self.config.scan_query_chunk_size, self.config.scan_key_chunk_size) * self.mesh.shape['sp']
+    def __init__(self, model_path, tokenizer_name, block_size=128):
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.model = FlaxLlamaForCausalLM.from_pretrained(model_path, from_pt=True)
+        self.sharded_rng = jax.random.PRNGKey(0)
+        self.block_size = block_size  # 保留给其它方法用
 
     @property
     def data_dim(self):
-        return self.mesh.shape['dp'] * self.mesh.shape['fsdp']
+        # 如果你不需要分布式mesh相关的，可以返回固定值或None
+        return None
 
-    def _load_model(self):
-        if FLAGS.load_llama_config != '':
-            llama_config = LLaMAConfig.load_config(FLAGS.load_llama_config)
-            updates = LLaMAConfig(**FLAGS.llama)
-            llama_config.update(dict(
-                scan_attention=updates.scan_attention,
-                scan_mlp=updates.scan_mlp,
-                scan_query_chunk_size=updates.scan_query_chunk_size,
-                scan_key_chunk_size=updates.scan_key_chunk_size,
-                scan_mlp_chunk_size=updates.scan_mlp_chunk_size,
-                scan_layers=updates.scan_layers,
-                param_scan_axis=updates.param_scan_axis,
-            ))
-        else:
-            llama_config = LLaMAConfig(**FLAGS.llama)
+    def _forward_generate(self, params, rng, batch):
+        # 简单封装，直接用transformers自带的generate
+        output = self.model.generate(
+            input_ids=batch['input_ids'],
+            attention_mask=batch['attention_mask'],
+            max_new_tokens=self.block_size,
+            prng_key=rng,
+            do_sample=False,
+        ).sequences
+        return output, rng  # rng没变，或者用jax.random.split更新
 
-        if FLAGS.update_llama_config != '':
-            llama_config.update(dict(eval(FLAGS.update_llama_config)))
-
-        llama_config.update(dict(
-            bos_token_id=self.tokenizer.bos_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-        ))
-        llama_config.update(dict(mesh_dim=FLAGS.mesh_dim))
-        self.config = llama_config
-
-        with jax.default_device(jax.devices("cpu")[0]):
-            _, self.params = StreamingCheckpointer.load_trainstate_checkpoint(
-                    FLAGS.load_checkpoint, disallow_trainstate=True, max_buffer_size=32 * 2 ** 30
-            )
-            self.model = FlaxLLaMAForCausalLM(
-                llama_config,
-                input_shape=(512, self.block_size),
-                seed=FLAGS.seed,
-                _do_init=False,
-                dtype=get_float_dtype_by_name(FLAGS.dtype),
-            )
-            self.model_ps = match_partition_rules(
-                LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
-            )
-            shard_fns, _ = make_shard_and_gather_fns(
-                self.model_ps, get_float_dtype_by_name(FLAGS.dtype)
-            )
-
-            with self.mesh:
-                self.params = tree_apply(shard_fns, self.params)
-
-    @cached_property
-    def _forward_generate(self):
-        def fn(params, rng, batch):
-            batch = with_sharding_constraint(batch, PS(('dp', 'fsdp'), 'sp'))
-            rng_generator = JaxRNG(rng)
-            output = self.model.generate(
-                batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                params=params['params'],
-                prng_key=rng_generator(),
-                generation_config=GenerationConfig(
-                    max_new_tokens=self.block_size,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    temperature=0.,
-                    do_sample=False,
-                    num_beams=1,
-                    top_k=50,
-                    top_p=1.0,
-                )
-            ).sequences[:, batch['input_ids'].shape[1]:]
-            return output, rng_generator()
-        return pjit(
-            fn,
-            in_shardings=(self.model_ps, PS(), PS()),
-            out_shardings=(PS(), PS())
-        )
-
-    def __call__(self, prompts, max_input_length):
-        inputs = self.prefix_tokenizer(
+    def __call__(self, prompts, max_input_length=512):
+        inputs = self.tokenizer(
             prompts,
             padding='max_length',
             truncation=True,
             max_length=max_input_length,
             return_tensors='np'
         )
-        batch = dict(
-            input_ids=inputs.input_ids,
-            attention_mask=inputs.attention_mask
-        )
-        with self.mesh:
-            output, self.sharded_rng = self._forward_generate(
-                self.params, self.sharded_rng, batch
-            )
-            output = jax.device_get(output)
-        output_text = []
-        for text in list(self.tokenizer.batch_decode(output, skip_special_tokens=True)):
-            if self.tokenizer.eos_token in text:
-                text = text.split(self.tokenizer.eos_token, maxsplit=1)[0]
-            output_text.append(text)
-        return output_text
+        batch = {
+            'input_ids': inputs.input_ids,
+            'attention_mask': inputs.attention_mask,
+        }
+        output_ids, self.sharded_rng = self._forward_generate(self.model.params, self.sharded_rng, batch)
+        output_texts = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+        return output_texts
 
 
 def main(argv):
