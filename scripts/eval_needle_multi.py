@@ -324,6 +324,11 @@ class Sampler:
         self.model = AutoModelForCausalLM.from_pretrained(model_path)
         self.sharded_rng = jax.random.PRNGKey(0)
         self.block_size = block_size
+    
+    @property
+    def data_dim(self):
+        return 1
+
 
     def __call__(self, prompts, max_input_length=512):
         max_input_length = min(max_input_length, self.block_size)
