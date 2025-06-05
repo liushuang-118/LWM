@@ -21,7 +21,7 @@ from tux import (
     with_sharding_constraint, tree_apply, open_file
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
-
+from safetensors.jax import load_file
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -365,26 +365,36 @@ class Sampler:
         llama_config.update(dict(mesh_dim=FLAGS.mesh_dim))
         self.config = llama_config
 
-        with jax.default_device(jax.devices("cpu")[0]):
-            _, self.params = StreamingCheckpointer.load_trainstate_checkpoint(
-                    FLAGS.load_checkpoint, disallow_trainstate=True, max_buffer_size=32 * 2 ** 30
-            )
-            self.model = FlaxLLaMAForCausalLM(
-                llama_config,
-                input_shape=(512, self.block_size),
-                seed=FLAGS.seed,
-                _do_init=False,
-                dtype=get_float_dtype_by_name(FLAGS.dtype),
-            )
-            self.model_ps = match_partition_rules(
-                LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
-            )
-            shard_fns, _ = make_shard_and_gather_fns(
-                self.model_ps, get_float_dtype_by_name(FLAGS.dtype)
-            )
+        # 初始化模型，但不初始化参数
+        self.model = FlaxLLaMAForCausalLM(
+            llama_config,
+            input_shape=(512, self.block_size),
+            seed=FLAGS.seed,
+            _do_init=False,
+            dtype=get_float_dtype_by_name(FLAGS.dtype),
+        )
 
-            with self.mesh:
-                self.params = tree_apply(shard_fns, self.params)
+        # 用 safetensors 加载权重文件
+        weight_path = FLAGS.load_checkpoint  # 这里传入 model.safetensors 的路径
+        if not os.path.exists(weight_path):
+            raise FileNotFoundError(f"weight file {weight_path} doesnt exist")
+
+        params = load_file(weight_path)  # 返回一个dict结构
+
+        # 这里视你模型权重结构，可能需要将 params 转成 Flax 模型需要的格式
+        # 假设你的 params 是已经对齐的，直接赋值
+        self.params = params
+
+        # 根据 mesh 和 partition rules 做参数分片
+        self.model_ps = match_partition_rules(
+            LLaMAConfig.get_partition_rules(llama_config.scan_layers, llama_config.param_scan_axis), self.params
+        )
+        shard_fns, _ = make_shard_and_gather_fns(
+            self.model_ps, get_float_dtype_by_name(FLAGS.dtype)
+        )
+
+        with self.mesh:
+            self.params = tree_apply(shard_fns, self.params)
 
     @cached_property
     def _forward_generate(self):
