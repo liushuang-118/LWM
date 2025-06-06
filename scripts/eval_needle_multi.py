@@ -22,6 +22,8 @@ from tux import (
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import DiffLlamaForCausalLM, DiffLlamaTokenizer
+
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -326,7 +328,8 @@ class Sampler:
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(model_path)
+        # self.model = AutoModelForCausalLM.from_pretrained(model_path)
+        self.model = DiffLlamaForCausalLM.from_pretrained(model_path)
         self.sharded_rng = jax.random.PRNGKey(0)
         self.block_size = block_size
     
