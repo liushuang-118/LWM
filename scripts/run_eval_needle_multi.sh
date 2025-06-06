@@ -21,7 +21,7 @@ python3 -u scripts/eval_needle_multi.py \
     --context_lengths_min=4000 \
     --context_lengths_max=4000 \
     --n_context_length_intervals=1 \
-    --n_document_depth_intervals=5 \
+    --n_document_depth_intervals=6 \
     --n_needles_total=6 \
     --n_needles_retrieve=2 \
     --n_rounds=5
