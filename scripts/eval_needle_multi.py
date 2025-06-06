@@ -214,98 +214,128 @@ class LLMNeedleHaystackTester:
         return int(context_length)
 
     def run_test(self):
+        from collections import defaultdict
+        from tqdm import tqdm
+
         fs = gcsfs.GCSFileSystem()
-        contexts = []
         template = self.OURS_TEMPLATE
-
-        def _key_from_result(result):
-            return (result['context_length'], result['depth_percent'], result['seed'])
-
         results = []
-        completed = set()
+
         def exists(fname):
-            if fname.startswith('gs://'):
-                return fs.exists(fname)
-            else:
-                return os.path.exists(fname)
+            return fs.exists(fname) if fname.startswith('gs://') else os.path.exists(fname)
+
+        completed = set()
         if exists(FLAGS.output_file):
             with open_file(FLAGS.output_file, 'r') as f:
                 results = json.load(f)
-                completed = set([_key_from_result(result) for result in results])
-        print('completed', len(completed))
+                completed = set(
+                    (r['context_length'], r['depth_percent'], r['seed']) for r in results
+                )
 
         full_contexts = self.read_context_files(FLAGS.n_rounds)
-        full_tokens = [self.enc.encode(full_context) for full_context in full_contexts]
+        full_tokens = [self.enc.encode(ctx) for ctx in full_contexts]
 
         start = time.time()
         for context_length in self.context_lengths:
-            trim_contexts = [self.enc.decode(full_token[:context_length]) for full_token in full_tokens]
+            trim_contexts = [
+                self.enc.decode(tokens[:context_length]) for tokens in full_tokens
+            ]
             max_input_length = self.compute_max_input_length(context_length)
-            contexts = []
-            for i in range(FLAGS.n_rounds):
-                if (int(context_length), i) in completed:
-                    continue
-                random_cities = random.sample(LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total)
-                document_depths = random.sample(self.document_depth_percents, FLAGS.n_needles_total)
-                random_cities_retrieve = random.sample(random_cities, FLAGS.n_needles_retrieve)
-                needles_info = {}
-                for random_city, depth_percent in zip(random_cities, document_depths):
-                    needles_info[random_city] = (
-                        str(self.generate_random_number(self.rnd_number_digits)),
-                        depth_percent
-                    )
-                context = self.create_contexts(needles_info, random_cities_retrieve, trim_contexts[i], context_length, i)
-                contexts.append(context)
 
-            if len(contexts) == 0:
-                continue
-
-            B = FLAGS.max_tokens_per_batch / (max_input_length + self.model.block_size)
-            B = int(B / self.model.data_dim) * self.model.data_dim
-            if B < self.model.data_dim:
-                B = self.model.data_dim
-            elif B > len(contexts):
-                B = int(math.ceil(len(contexts) / self.model.data_dim) * self.model.data_dim)
-            n_pad = B - len(contexts) % B
-            for _ in range(n_pad):
-                contexts.insert(0, contexts[0])
-
-            pbar = tqdm(total=len(contexts))
-            for i in range(0, len(contexts), B):
-                contexts_i = contexts[i:i + B]
-                prompts = [
-                    template.format(context=context['context'], question=context['question'])
-                    for context in contexts_i
-                ]
-                outs = self.model(prompts, max_input_length)
-                for j, (context, out) in enumerate(zip(contexts_i, outs)):
-                    if i + j < n_pad:
+            for depth_percent in self.document_depth_percents:
+                for i in range(FLAGS.n_rounds):
+                    key = (context_length, depth_percent, i)
+                    if key in completed:
                         continue
-                    rnd_nums_to_retrieve = [
-                        context['needles_info'][city][0] for city in context['cities_to_retrieve']
-                    ]
-                    results.append({
-                        'context_length': context['context_length'],
-                        'needles_info': context['needles_info'],
-                        'question': context['question'],
-                        'answer': rnd_nums_to_retrieve,
+
+                    # 生成多个 needles，分布在任意深度（包括重复）
+                    random_cities = random.sample(
+                        LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total
+                    )
+                    document_depths = random.choices(self.document_depth_percents, FLAGS.n_needles_total)
+
+                    needles_info = {
+                        city: (
+                            str(self.generate_random_number(self.rnd_number_digits)),
+                            doc_depth
+                        )
+                        for city, doc_depth in zip(random_cities, document_depths)
+                    }
+
+                    # 从所有 needles 中随机选择一个作为“答案针”
+                    city_to_retrieve = random.choice(list(needles_info.keys()))
+                    rnd_number_to_retrieve = needles_info[city_to_retrieve][0]
+
+                    # 创建上下文
+                    context_data = self.create_contexts(
+                        needles_info,
+                        [city_to_retrieve],  # only one answer needle for question
+                        trim_contexts[i],
+                        context_length,
+                        i
+                    )
+
+                    prompt = template.format(
+                        context=context_data['context'],
+                        question=context_data['question']
+                    )
+
+                    out = self.model([prompt], max_input_length)[0]
+                    correct = rnd_number_to_retrieve in out
+
+                    result = {
+                        'context_length': context_length,
+                        'depth_percent': depth_percent,
+                        'needles_info': needles_info,
+                        'question': context_data['question'],
+                        'answer': [rnd_number_to_retrieve],
                         'response': out,
-                        'correct': [rnd_num in out for rnd_num in rnd_nums_to_retrieve],
-                        'seed': context['seed'],
-                    })
-                    print(results[-1]['correct'], out, rnd_nums_to_retrieve)
-                if jax.process_index() == 0:
-                    if FLAGS.output_file.startswith('gs://'):
-                            fs = gcsfs.GCSFileSystem()
+                        'correct': [correct],
+                        'seed': i
+                    }
+                    results.append(result)
+
+                    if jax.process_index() == 0:
+                        if FLAGS.output_file.startswith('gs://'):
                             with fs.open(FLAGS.output_file, 'w') as f:
                                 f.write(json.dumps(results, ensure_ascii=False, indent=2))
-                    else:
-                        with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
-                            json.dump(results, f, ensure_ascii=False, indent=2)
-                pbar.update(len(contexts_i))
-            pbar.close()
+                        else:
+                            with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
+                                json.dump(results, f, ensure_ascii=False, indent=2)
+
+                    print(result['correct'], out, rnd_number_to_retrieve)
+
         print('elapsed', time.time() - start)
         print('done')
+
+        # === Accuracy stats ===
+        accuracy_stats = defaultdict(list)
+        for result in results:
+            cl = result['context_length']
+            dp = result['depth_percent']
+            correct_flags = result['correct']
+            for flag in correct_flags:
+                accuracy_stats[(cl, dp)].append(flag)
+
+        stats_output = []
+        for (cl, dp), flags in sorted(accuracy_stats.items()):
+            acc = np.mean(flags)
+            stats_output.append({
+                'context_length': cl,
+                'document_depth_percent': dp,
+                'accuracy': round(float(acc), 4)
+            })
+
+        stats_filename = FLAGS.output_file.replace('.json', '_stats.json')
+        if stats_filename.startswith('gs://'):
+            with fs.open(stats_filename, 'w') as f:
+                f.write(json.dumps(stats_output, ensure_ascii=False, indent=2))
+        else:
+            with open(stats_filename, 'w', encoding='utf-8') as f:
+                json.dump(stats_output, f, ensure_ascii=False, indent=2)
+
+        print(f'\nAccuracy stats written to {stats_filename}')
+
 
 
     def print_start_test_summary(self):
