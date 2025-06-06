@@ -252,7 +252,7 @@ class LLMNeedleHaystackTester:
                     random_cities = random.sample(
                         LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total
                     )
-                    document_depths = random.choices(self.document_depth_percents, FLAGS.n_needles_total)
+                    document_depths = random.choices(self.document_depth_percents, k=FLAGS.n_needles_total)
 
                     needles_info = {
                         city: (
