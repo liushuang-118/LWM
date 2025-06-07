@@ -22,7 +22,7 @@ from tux import (
 )
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers import DiffLlamaForCausalLM
+# from transformers import DiffLlamaForCausalLM
 
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
