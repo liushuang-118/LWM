@@ -649,6 +649,7 @@ class LLMNeedleHaystackTester:
                 
                 # Create context
                 context = self.create_contexts(needles_info, random_cities_retrieve, trim_contexts[i], context_length, i)
+                print(context)
                 prompt = template.format(context=context['context'], question=context['question'])
                 
                 # Get attention scores
