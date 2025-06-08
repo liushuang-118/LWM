@@ -492,16 +492,22 @@ class LLMNeedleHaystackTester:
                     answer_positions.extend([i for i, t in enumerate(tokens) if t == token])
                 answer_positions = list(set(answer_positions))
 
-                # 计算 attention 指标
-                total_attention = np.sum(attention_matrix)
+                # Calculate attention metrics
                 if answer_positions:
-                    answer_attention = np.sum(attention_matrix[:, answer_positions])
-                    non_answer_attention = total_attention - answer_attention
-                    attention_to_answer = answer_attention / len(answer_positions)
-                    attention_noise = non_answer_attention / (attention_matrix.size - len(answer_positions))
+                    # 每个query token对答案tokens的attention之和，shape=(num_query_tokens,)
+                    attention_to_answer_per_query = np.sum(attention_matrix[:, answer_positions], axis=1)
+
+                    # attention_to_answer：所有query token的平均attention
+                    attention_to_answer = np.mean(attention_to_answer_per_query)
+
+                    # attention_noise：每个query token对非答案tokens的attention之和，平均值
+                    attention_noise_per_query = 1.0 - attention_to_answer_per_query  # assuming rows sum to 1
+                    attention_noise = np.mean(attention_noise_per_query)
                 else:
+                    # 如果没有答案tokens，设为0或者均匀分布
                     attention_to_answer = 0.0
-                    attention_noise = total_attention / attention_matrix.size
+                    attention_noise = 1.0  # 注意力全部是噪声
+
                 # Store raw result
                 raw_result = {
                     "context_length": context_length,
