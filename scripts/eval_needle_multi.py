@@ -470,7 +470,7 @@ class LLMNeedleHaystackTester:
         if model_type == "diffllama":
             # first try to use the specialized DiffLlama method
             try:
-                diffllama_attention, components = get_diffllama_attention_components(
+                diffllama_attention, components = self.get_diffllama_attention_components(
                     model, tokenizer, text, device, layer_idx, head_idx
                 )
                 if diffllama_attention is not None:
