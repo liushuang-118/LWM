@@ -23,7 +23,6 @@ from tux import (
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from transformers import AutoTokenizer, AutoModelForCausalLM
 # from transformers import DiffLlamaForCausalLM
-from attention_visualizer import get_attention_scores
 import torch
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
@@ -434,6 +433,182 @@ class LLMNeedleHaystackTester:
     #     print(f'\nAccuracy stats written to {stats_filename}')
 
     # for the 3rd experiment
+
+    def get_diffllama_attention_components(model, tokenizer, text, device, layer_idx=-1, head_idx=0):
+        """
+        Specialized function to get differential attention components for DiffLlama.
+        Focuses on calculating lambda and relies on the main model output for the final attention matrix.
+        """
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        captured_components = {
+            'lambda_val': None,
+            'module_type_hooked': None,
+            # A1, A2, and final_attention_hook are removed as they are not reliably capturable currently
+        }
+
+
+    def get_attention_scores(self, text, layer_idx=-1, head_idx=0):
+        """
+        Extract attention scores from model for the given text.
+        Modified to work with the class structure of run_test.
+        
+        Args:
+            text: input text to analyze
+            layer_idx: which layer to analyze (-1 for last layer)
+            head_idx: which attention head to analyze
+            
+        Returns:
+            attention_matrix, tokens, metadata
+        """
+        model = self.model
+        tokenizer = self.enc
+        device = torch.device("cuda:0"),
+        model_type = "llama" 
+        
+        if model_type == "diffllama":
+            # first try to use the specialized DiffLlama method
+            try:
+                diffllama_attention, components = get_diffllama_attention_components(
+                    model, tokenizer, text, device, layer_idx, head_idx
+                )
+                if diffllama_attention is not None:
+                    tokens = [tokenizer.decode([token_id]) for token_id in 
+                            tokenizer(text, return_tensors="pt", truncation=True, max_length=512)['input_ids'][0]]
+                    
+                    metadata = {
+                        'layer_idx': layer_idx, 'head_idx': head_idx,
+                        'seq_len': len(tokens), 'model_type': model_type,
+                        'extraction_method': 'diffllama_specialized',
+                        'lambda_value': components.get('lambda'),
+                        'captured_components': list(components.keys())
+                    }
+                    
+                    print(f"✅ Successfully extracted DiffLlama differential attention using specialized method")
+                    return diffllama_attention, tokens, metadata
+            except Exception as e:
+                print(f"⚠️ DiffLlama specialized extraction failed: {e}, falling back to standard method")
+        
+        # Tokenize input
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        input_ids = inputs['input_ids']
+        
+        # Get tokens for visualization
+        tokens = [tokenizer.decode([token_id]) for token_id in input_ids[0]]
+        
+        # Temporarily enable attention output
+        original_output_attentions = getattr(model.config, 'output_attentions', False)
+        model.config.output_attentions = True
+        
+        attention_matrix = None
+        
+        # Initialize metadata dictionary
+        metadata = {
+            'layer_idx': layer_idx, 
+            'head_idx': head_idx,
+            'seq_len': len(tokens),
+            'model_type': model_type,
+            'captured_components': [],
+            'lambda_std_dev': None,
+            'lambda_params': {} 
+        }
+        
+        if model_type == "diffllama":
+            metadata['lambda_std_dev'] = getattr(model.config, 'lambda_std_dev', None)
+        
+        # For DiffLlama, set up specialized hooks
+        captured_attention_weights = {}
+        hooks = []
+        
+        if model_type == "diffllama":
+            def create_diffllama_attention_hook(layer_name):
+                def hook_fn(module, input, output):
+                    captured_attention_weights[f"{layer_name}_module"] = module
+                    
+                    for attr_name in ['attn_weights', 'attention_weights', 'attention_probs']:
+                        if hasattr(module, attr_name):
+                            attr_value = getattr(module, attr_name)
+                            if torch.is_tensor(attr_value) and len(attr_value.shape) == 4:
+                                captured_attention_weights[f"{layer_name}_{attr_name}"] = attr_value.detach()
+                    
+                    if isinstance(output, tuple):
+                        for i, out_tensor in enumerate(output):
+                            if torch.is_tensor(out_tensor):
+                                if len(out_tensor.shape) == 4:
+                                    captured_attention_weights[f"{layer_name}_output_attn_{i}"] = out_tensor.detach()
+                                elif len(out_tensor.shape) == 3:
+                                    captured_attention_weights[f"{layer_name}_hidden_{i}"] = out_tensor.detach()
+                    
+                    captured_attention_weights[f"{layer_name}_full_output"] = output
+                    return output
+                return hook_fn
+            
+            target_layer_idx = layer_idx if layer_idx >= 0 else len(model.model.layers) + layer_idx
+            
+            if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+                if 0 <= target_layer_idx < len(model.model.layers):
+                    layer_to_hook = model.model.layers[target_layer_idx]
+                    
+                    for name, module in layer_to_hook.named_modules():
+                        module_type_name = type(module).__name__
+                        if 'DiffLlama' in module_type_name and ('Attention' in module_type_name or 'Attn' in module_type_name):
+                            hook = module.register_forward_hook(
+                                create_diffllama_attention_hook(f"layer_{target_layer_idx}_{name}")
+                            )
+                            hooks.append(hook)
+        
+        try:
+            with torch.no_grad():
+                outputs = model(**inputs)
+                
+                if hasattr(outputs, 'attentions') and outputs.attentions is not None:
+                    attentions_from_output = outputs.attentions
+                    effective_layer_idx = layer_idx if layer_idx >= 0 else len(attentions_from_output) + layer_idx
+                    
+                    if 0 <= effective_layer_idx < len(attentions_from_output):
+                        layer_attention = attentions_from_output[effective_layer_idx]
+                        if head_idx < layer_attention.shape[1]:
+                            attention_matrix = layer_attention[0, head_idx].cpu().numpy()
+                
+                if model_type == "diffllama" and captured_attention_weights:
+                    if attention_matrix is None:
+                        hooked_attn_candidates = {}
+                        for key_hook, tensor_hook in captured_attention_weights.items():
+                            if torch.is_tensor(tensor_hook) and len(tensor_hook.shape) == 4:
+                                if any(attr_part in key_hook for attr_part in ['_attention_weights', '_attn_weights', '_attention_probs', '_output_attn_']):
+                                    hooked_attn_candidates[key_hook] = tensor_hook
+                        
+                        if hooked_attn_candidates:
+                            chosen_key = sorted(hooked_attn_candidates.keys())[0]
+                            chosen_tensor = hooked_attn_candidates[chosen_key]
+                            if head_idx < chosen_tensor.shape[1]:
+                                attention_matrix = chosen_tensor[0, head_idx].cpu().numpy()
+
+        except Exception as e:
+            print(f"Error extracting attention: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            for hook in hooks:
+                hook.remove()
+            model.config.output_attentions = original_output_attentions
+        
+        # Final metadata update
+        metadata['layer_idx'] = layer_idx
+        if model_type == "diffllama":
+            metadata['captured_components'] = list(captured_attention_weights.keys())
+            if metadata.get('lambda_std_dev') is None and hasattr(model.config, 'lambda_std_dev'):
+                metadata['lambda_std_dev'] = model.config.lambda_std_dev
+        else: 
+            metadata.pop('lambda_params', None)
+            metadata.pop('lambda_std_dev', None)
+        
+        return attention_matrix, tokens, metadata
+    
+    
     def run_test(self):
         fs = gcsfs.GCSFileSystem()
         template = self.OURS_TEMPLATE
@@ -478,11 +653,7 @@ class LLMNeedleHaystackTester:
                 
                 # Get attention scores
                 attention_matrix, tokens, metadata = get_attention_scores(
-                    model=self.model,
-                    tokenizer=self.enc,
                     text=prompt,
-                    device=torch.device("cuda:0"),
-                    model_type="llama",  # or "llama" for baseline
                     layer_idx=-1,
                     head_idx=0
                 )
