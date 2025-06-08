@@ -526,7 +526,8 @@ class LLMNeedleHaystackTester:
                     "attention_to_answer": float(attention_to_answer),  # Convert to native Python float
                     "attention_noise": float(attention_noise),
                     "tokens": tokens,
-                    "answer_positions": answer_positions,
+                    "retrieval_positions": retrieval_positions,
+                    "noise_positions": noise_positions,
                     "prompt": prompt
                 }
                 results["raw_results"].append(raw_result)
