@@ -659,7 +659,9 @@ class LLMNeedleHaystackTester:
                     layer_idx=-1,
                     head_idx=0
                 )
-                
+                if attention_matrix is None:
+                    attention_matrix = np.zeros((len(tokens), len(tokens)))
+                    print("None-----------------------")
                 # Analyze attention patterns
                 answer_tokens = self.enc.encode(" ".join(context['answer']))  # Handle multiple answers
                 answer_positions = []
