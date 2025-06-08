@@ -24,6 +24,7 @@ from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from transformers import AutoTokenizer, AutoModelForCausalLM
 # from transformers import DiffLlamaForCausalLM
 from attention_visualizer import get_attention_scores
+import torch
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -480,7 +481,7 @@ class LLMNeedleHaystackTester:
                     model=self.model,
                     tokenizer=self.enc,
                     text=prompt,
-                    device=self.device,
+                    device=torch.device("cuda:0"),
                     model_type="llama",  # or "llama" for baseline
                     layer_idx=-1,
                     head_idx=0
