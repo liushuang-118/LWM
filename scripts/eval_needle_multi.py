@@ -464,7 +464,7 @@ class LLMNeedleHaystackTester:
         """
         model = self.model
         tokenizer = self.enc
-        device = torch.device("cuda:0"),
+        device = torch.device("cuda:0")
         model_type = "llama" 
         
         if model_type == "diffllama":
