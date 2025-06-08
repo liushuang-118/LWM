@@ -652,7 +652,7 @@ class LLMNeedleHaystackTester:
                 prompt = template.format(context=context['context'], question=context['question'])
                 
                 # Get attention scores
-                attention_matrix, tokens, metadata = get_attention_scores(
+                attention_matrix, tokens, metadata = self.get_attention_scores(
                     text=prompt,
                     layer_idx=-1,
                     head_idx=0
