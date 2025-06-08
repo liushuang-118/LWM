@@ -606,8 +606,8 @@ class Sampler:
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        # self.model = AutoModelForCausalLM.from_pretrained(model_path)
-        self.model = DiffLlamaForCausalLM.from_pretrained(model_path, attn_implementation="eager")
+        self.model = AutoModelForCausalLM.from_pretrained(model_path)
+        # self.model = DiffLlamaForCausalLM.from_pretrained(model_path, attn_implementation="eager")
         self.sharded_rng = jax.random.PRNGKey(0)
         self.block_size = block_size
     
