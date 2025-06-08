@@ -499,7 +499,7 @@ class LLMNeedleHaystackTester:
         tokens = [tokenizer.decode([token_id]) for token_id in input_ids[0]]
         
         # Temporarily enable attention output
-        original_output_attentions = getattr(model.config, 'output_attentions', False)
+        original_output_attentions = getattr(model.model.config, 'output_attentions', False)
         model.config.output_attentions = True
         
         attention_matrix = None
