@@ -23,7 +23,7 @@ from tux import (
 from lwm.llama import LLaMAConfig, FlaxLLaMAForCausalLM
 from transformers import AutoTokenizer, AutoModelForCausalLM
 # from transformers import DiffLlamaForCausalLM
-
+from attention_visualizer import get_attention_scores
 
 FLAGS, FLAGS_DEF = define_flags_with_default(
     haystack_file="",
@@ -212,131 +212,364 @@ class LLMNeedleHaystackTester:
         # context_length = 2 ** math.ceil(math.log2(context_length))
         context_length = math.ceil(context_length / block_size) * block_size
         return int(context_length)
+    # for the 1st experiment
+    # def run_test(self):
+    #     fs = gcsfs.GCSFileSystem()
+    #     contexts = []
+    #     template = self.OURS_TEMPLATE
 
+    #     def _key_from_result(result):
+    #         return (result['context_length'], result['depth_percent'], result['seed'])
+
+    #     results = []
+    #     completed = set()
+    #     def exists(fname):
+    #         if fname.startswith('gs://'):
+    #             return fs.exists(fname)
+    #         else:
+    #             return os.path.exists(fname)
+    #     if exists(FLAGS.output_file):
+    #         with open_file(FLAGS.output_file, 'r') as f:
+    #             results = json.load(f)
+    #             completed = set([_key_from_result(result) for result in results])
+    #     print('completed', len(completed))
+
+    #     full_contexts = self.read_context_files(FLAGS.n_rounds)
+    #     full_tokens = [self.enc.encode(full_context) for full_context in full_contexts]
+
+    #     start = time.time()
+    #     for context_length in self.context_lengths:
+    #         trim_contexts = [self.enc.decode(full_token[:context_length]) for full_token in full_tokens]
+    #         max_input_length = self.compute_max_input_length(context_length)
+    #         contexts = []
+    #         for i in range(FLAGS.n_rounds):
+    #             if (int(context_length), i) in completed:
+    #                 continue
+    #             random_cities = random.sample(LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total)
+    #             document_depths = random.sample(self.document_depth_percents, FLAGS.n_needles_total)
+    #             random_cities_retrieve = random.sample(random_cities, FLAGS.n_needles_retrieve)
+    #             needles_info = {}
+    #             for random_city, depth_percent in zip(random_cities, document_depths):
+    #                 needles_info[random_city] = (
+    #                     str(self.generate_random_number(self.rnd_number_digits)),
+    #                     depth_percent
+    #                 )
+    #             context = self.create_contexts(needles_info, random_cities_retrieve, trim_contexts[i], context_length, i)
+    #             contexts.append(context)
+
+    #         if len(contexts) == 0:
+    #             continue
+
+    #         B = FLAGS.max_tokens_per_batch / (max_input_length + self.model.block_size)
+    #         B = int(B / self.model.data_dim) * self.model.data_dim
+    #         if B < self.model.data_dim:
+    #             B = self.model.data_dim
+    #         elif B > len(contexts):
+    #             B = int(math.ceil(len(contexts) / self.model.data_dim) * self.model.data_dim)
+    #         n_pad = B - len(contexts) % B
+    #         for _ in range(n_pad):
+    #             contexts.insert(0, contexts[0])
+
+    #         pbar = tqdm(total=len(contexts))
+    #         for i in range(0, len(contexts), B):
+    #             contexts_i = contexts[i:i + B]
+    #             prompts = [
+    #                 template.format(context=context['context'], question=context['question'])
+    #                 for context in contexts_i
+    #             ]
+    #             outs = self.model(prompts, max_input_length)
+    #             for j, (context, out) in enumerate(zip(contexts_i, outs)):
+    #                 if i + j < n_pad:
+    #                     continue
+    #                 rnd_nums_to_retrieve = [
+    #                     context['needles_info'][city][0] for city in context['cities_to_retrieve']
+    #                 ]
+    #                 results.append({
+    #                     'context_length': context['context_length'],
+    #                     'needles_info': context['needles_info'],
+    #                     'question': context['question'],
+    #                     'answer': rnd_nums_to_retrieve,
+    #                     'response': out,
+    #                     'correct': [rnd_num in out for rnd_num in rnd_nums_to_retrieve],
+    #                     'seed': context['seed'],
+    #                 })
+    #                 print(results[-1]['correct'], out, rnd_nums_to_retrieve)
+    #             if jax.process_index() == 0:
+    #                 if FLAGS.output_file.startswith('gs://'):
+    #                         fs = gcsfs.GCSFileSystem()
+    #                         with fs.open(FLAGS.output_file, 'w') as f:
+    #                             f.write(json.dumps(results, ensure_ascii=False, indent=2))
+    #                 else:
+    #                     with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
+    #                         json.dump(results, f, ensure_ascii=False, indent=2)
+    #             pbar.update(len(contexts_i))
+    #         pbar.close()
+    #     print('elapsed', time.time() - start)
+    #     print('done')
+
+
+    # for the 2nd experiment
+    # def run_test(self):
+    #     from collections import defaultdict
+    #     from tqdm import tqdm
+
+    #     fs = gcsfs.GCSFileSystem()
+    #     template = self.OURS_TEMPLATE
+    #     results = []
+
+    #     def exists(fname):
+    #         return fs.exists(fname) if fname.startswith('gs://') else os.path.exists(fname)
+
+    #     completed = set()
+    #     if exists(FLAGS.output_file):
+    #         with open_file(FLAGS.output_file, 'r') as f:
+    #             results = json.load(f)
+    #             completed = set(
+    #                 (r['context_length'], r['depth_percent'], r['seed']) for r in results
+    #             )
+
+    #     full_contexts = self.read_context_files(FLAGS.n_rounds)
+    #     full_tokens = [self.enc.encode(ctx) for ctx in full_contexts]
+
+    #     start = time.time()
+    #     for context_length in self.context_lengths:
+    #         trim_contexts = [
+    #             self.enc.decode(tokens[:context_length]) for tokens in full_tokens
+    #         ]
+    #         max_input_length = self.compute_max_input_length(context_length)
+
+    #         for depth_percent in self.document_depth_percents:
+    #             for i in range(FLAGS.n_rounds):
+    #                 key = (context_length, depth_percent, i)
+    #                 if key in completed:
+    #                     continue
+
+    #                 # 生成多个 needles，分布在任意深度（包括重复）
+    #                 random_cities = random.sample(
+    #                     LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total
+    #                 )
+    #                 document_depths = random.choices(self.document_depth_percents, k=FLAGS.n_needles_total)
+
+    #                 needles_info = {
+    #                     city: (
+    #                         str(self.generate_random_number(self.rnd_number_digits)),
+    #                         doc_depth
+    #                     )
+    #                     for city, doc_depth in zip(random_cities, document_depths)
+    #                 }
+
+    #                 # 从所有 needles 中随机选择一个作为“答案针”
+    #                 city_to_retrieve = random.choice(list(needles_info.keys()))
+    #                 rnd_number_to_retrieve = needles_info[city_to_retrieve][0]
+
+    #                 # 创建上下文
+    #                 context_data = self.create_contexts(
+    #                     needles_info,
+    #                     [city_to_retrieve],  # only one answer needle for question
+    #                     trim_contexts[i],
+    #                     context_length,
+    #                     i
+    #                 )
+
+    #                 prompt = template.format(
+    #                     context=context_data['context'],
+    #                     question=context_data['question']
+    #                 )
+
+    #                 out = self.model([prompt], max_input_length)[0]
+    #                 correct = rnd_number_to_retrieve in out
+
+    #                 result = {
+    #                     'context_length': context_length,
+    #                     'depth_percent': depth_percent,
+    #                     'needles_info': needles_info,
+    #                     'question': context_data['question'],
+    #                     'answer': [rnd_number_to_retrieve],
+    #                     'response': out,
+    #                     'correct': [correct],
+    #                     'seed': i
+    #                 }
+    #                 results.append(result)
+
+    #                 if jax.process_index() == 0:
+    #                     if FLAGS.output_file.startswith('gs://'):
+    #                         with fs.open(FLAGS.output_file, 'w') as f:
+    #                             f.write(json.dumps(results, ensure_ascii=False, indent=2))
+    #                     else:
+    #                         with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
+    #                             json.dump(results, f, ensure_ascii=False, indent=2)
+
+    #                 print(result['correct'], out, rnd_number_to_retrieve)
+
+    #     print('elapsed', time.time() - start)
+    #     print('done')
+
+    #     # === Accuracy stats ===
+    #     accuracy_stats = defaultdict(list)
+    #     for result in results:
+    #         cl = result['context_length']
+    #         dp = result['depth_percent']
+    #         correct_flags = result['correct']
+    #         for flag in correct_flags:
+    #             accuracy_stats[(cl, dp)].append(flag)
+
+    #     stats_output = []
+    #     for (cl, dp), flags in sorted(accuracy_stats.items()):
+    #         acc = np.mean(flags)
+    #         stats_output.append({
+    #             'context_length': cl,
+    #             'document_depth_percent': dp,
+    #             'accuracy': round(float(acc), 4)
+    #         })
+
+    #     stats_filename = FLAGS.output_file.replace('.json', '_stats.json')
+    #     if stats_filename.startswith('gs://'):
+    #         with fs.open(stats_filename, 'w') as f:
+    #             f.write(json.dumps(stats_output, ensure_ascii=False, indent=2))
+    #     else:
+    #         with open(stats_filename, 'w', encoding='utf-8') as f:
+    #             json.dump(stats_output, f, ensure_ascii=False, indent=2)
+
+    #     print(f'\nAccuracy stats written to {stats_filename}')
+
+    # for the 3rd experiment
     def run_test(self):
-        from collections import defaultdict
-        from tqdm import tqdm
-
         fs = gcsfs.GCSFileSystem()
         template = self.OURS_TEMPLATE
-        results = []
-
-        def exists(fname):
-            return fs.exists(fname) if fname.startswith('gs://') else os.path.exists(fname)
-
-        completed = set()
-        if exists(FLAGS.output_file):
-            with open_file(FLAGS.output_file, 'r') as f:
-                results = json.load(f)
-                completed = set(
-                    (r['context_length'], r['depth_percent'], r['seed']) for r in results
-                )
-
+        
+        # Initialize results structure
+        results = {
+            "metadata": {
+                "model_type": "diffllama",  # or "llama" for baseline
+                "test_name": "attention_pattern_analysis",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            },
+            "raw_results": [],
+            "aggregated_results": {
+                "by_depth": {},
+                "by_context_length": {}
+            }
+        }
+        
         full_contexts = self.read_context_files(FLAGS.n_rounds)
-        full_tokens = [self.enc.encode(ctx) for ctx in full_contexts]
-
-        start = time.time()
+        full_tokens = [self.enc.encode(full_context) for full_context in full_contexts]
+        
         for context_length in self.context_lengths:
-            trim_contexts = [
-                self.enc.decode(tokens[:context_length]) for tokens in full_tokens
-            ]
-            max_input_length = self.compute_max_input_length(context_length)
-
-            for depth_percent in self.document_depth_percents:
-                for i in range(FLAGS.n_rounds):
-                    key = (context_length, depth_percent, i)
-                    if key in completed:
-                        continue
-
-                    # 生成多个 needles，分布在任意深度（包括重复）
-                    random_cities = random.sample(
-                        LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total
+            trim_contexts = [self.enc.decode(full_token[:context_length]) for full_token in full_tokens]
+            
+            for i in range(FLAGS.n_rounds):
+                # Sample random cities and depths
+                random_cities = random.sample(LLMNeedleHaystackTester.RANDOM_NEEDLE_CITIES, FLAGS.n_needles_total)
+                document_depths = random.sample(self.document_depth_percents, FLAGS.n_needles_total)
+                random_cities_retrieve = random.sample(random_cities, FLAGS.n_needles_retrieve)
+                
+                # Create needles info
+                needles_info = {}
+                for random_city, depth_percent in zip(random_cities, document_depths):
+                    needles_info[random_city] = (
+                        str(self.generate_random_number(self.rnd_number_digits)),
+                        depth_percent
                     )
-                    document_depths = random.choices(self.document_depth_percents, k=FLAGS.n_needles_total)
-
-                    needles_info = {
-                        city: (
-                            str(self.generate_random_number(self.rnd_number_digits)),
-                            doc_depth
-                        )
-                        for city, doc_depth in zip(random_cities, document_depths)
+                
+                # Create context
+                context = self.create_contexts(needles_info, random_cities_retrieve, trim_contexts[i], context_length, i)
+                prompt = template.format(context=context['context'], question=context['question'])
+                
+                # Get attention scores
+                attention_matrix, tokens, metadata = get_attention_scores(
+                    model=self.model,
+                    tokenizer=self.enc,
+                    text=prompt,
+                    device=self.device,
+                    model_type="llama",  # or "llama" for baseline
+                    layer_idx=-1,
+                    head_idx=0
+                )
+                
+                # Analyze attention patterns
+                answer_tokens = self.enc.encode(" ".join(context['answer']))  # Handle multiple answers
+                answer_positions = []
+                for token in answer_tokens:
+                    answer_positions.extend([i for i, t in enumerate(tokens) if t == token])
+                
+                # Calculate metrics
+                total_attention = np.sum(attention_matrix)
+                if answer_positions:
+                    answer_attention = np.sum(attention_matrix[:, answer_positions])
+                    non_answer_attention = total_attention - answer_attention
+                    attention_to_answer = answer_attention / len(answer_positions)
+                    attention_noise = non_answer_attention / (attention_matrix.size - len(answer_positions))
+                else:
+                    attention_to_answer = 0
+                    attention_noise = total_attention / attention_matrix.size
+                
+                # Store raw result
+                raw_result = {
+                    "context_length": context_length,
+                    "depth_percent": depth_percent,
+                    "seed": i,
+                    "attention_matrix_shape": attention_matrix.shape,
+                    "attention_to_answer": float(attention_to_answer),  # Convert to native Python float
+                    "attention_noise": float(attention_noise),
+                    "tokens": tokens,
+                    "answer_positions": answer_positions,
+                    "prompt": prompt
+                }
+                results["raw_results"].append(raw_result)
+                
+                # Update aggregated results
+                depth_key = f"{depth_percent}%"
+                length_key = f"{context_length}tokens"
+                
+                if depth_key not in results["aggregated_results"]["by_depth"]:
+                    results["aggregated_results"]["by_depth"][depth_key] = {
+                        "attention_to_answer": [],
+                        "attention_noise": []
                     }
-
-                    # 从所有 needles 中随机选择一个作为“答案针”
-                    city_to_retrieve = random.choice(list(needles_info.keys()))
-                    rnd_number_to_retrieve = needles_info[city_to_retrieve][0]
-
-                    # 创建上下文
-                    context_data = self.create_contexts(
-                        needles_info,
-                        [city_to_retrieve],  # only one answer needle for question
-                        trim_contexts[i],
-                        context_length,
-                        i
-                    )
-
-                    prompt = template.format(
-                        context=context_data['context'],
-                        question=context_data['question']
-                    )
-
-                    out = self.model([prompt], max_input_length)[0]
-                    correct = rnd_number_to_retrieve in out
-
-                    result = {
-                        'context_length': context_length,
-                        'depth_percent': depth_percent,
-                        'needles_info': needles_info,
-                        'question': context_data['question'],
-                        'answer': [rnd_number_to_retrieve],
-                        'response': out,
-                        'correct': [correct],
-                        'seed': i
+                
+                if length_key not in results["aggregated_results"]["by_context_length"]:
+                    results["aggregated_results"]["by_context_length"][length_key] = {
+                        "attention_to_answer": [],
+                        "attention_noise": []
                     }
-                    results.append(result)
-
-                    if jax.process_index() == 0:
-                        if FLAGS.output_file.startswith('gs://'):
-                            with fs.open(FLAGS.output_file, 'w') as f:
-                                f.write(json.dumps(results, ensure_ascii=False, indent=2))
-                        else:
-                            with open(FLAGS.output_file, 'w', encoding='utf-8') as f:
-                                json.dump(results, f, ensure_ascii=False, indent=2)
-
-                    print(result['correct'], out, rnd_number_to_retrieve)
-
-        print('elapsed', time.time() - start)
-        print('done')
-
-        # === Accuracy stats ===
-        accuracy_stats = defaultdict(list)
-        for result in results:
-            cl = result['context_length']
-            dp = result['depth_percent']
-            correct_flags = result['correct']
-            for flag in correct_flags:
-                accuracy_stats[(cl, dp)].append(flag)
-
-        stats_output = []
-        for (cl, dp), flags in sorted(accuracy_stats.items()):
-            acc = np.mean(flags)
-            stats_output.append({
-                'context_length': cl,
-                'document_depth_percent': dp,
-                'accuracy': round(float(acc), 4)
-            })
-
-        stats_filename = FLAGS.output_file.replace('.json', '_stats.json')
-        if stats_filename.startswith('gs://'):
-            with fs.open(stats_filename, 'w') as f:
-                f.write(json.dumps(stats_output, ensure_ascii=False, indent=2))
+                
+                results["aggregated_results"]["by_depth"][depth_key]["attention_to_answer"].append(attention_to_answer)
+                results["aggregated_results"]["by_depth"][depth_key]["attention_noise"].append(attention_noise)
+                results["aggregated_results"]["by_context_length"][length_key]["attention_to_answer"].append(attention_to_answer)
+                results["aggregated_results"]["by_context_length"][length_key]["attention_noise"].append(attention_noise)
+        
+        # Calculate final aggregated statistics
+        for depth_key in results["aggregated_results"]["by_depth"]:
+            depth_data = results["aggregated_results"]["by_depth"][depth_key]
+            depth_data["mean_attention_to_answer"] = float(np.mean(depth_data["attention_to_answer"]))
+            depth_data["mean_attention_noise"] = float(np.mean(depth_data["attention_noise"]))
+            depth_data["std_attention_to_answer"] = float(np.std(depth_data["attention_to_answer"]))
+            depth_data["std_attention_noise"] = float(np.std(depth_data["attention_noise"]))
+            # Remove raw lists to keep JSON smaller
+            del depth_data["attention_to_answer"]
+            del depth_data["attention_noise"]
+        
+        for length_key in results["aggregated_results"]["by_context_length"]:
+            length_data = results["aggregated_results"]["by_context_length"][length_key]
+            length_data["mean_attention_to_answer"] = float(np.mean(length_data["attention_to_answer"]))
+            length_data["mean_attention_noise"] = float(np.mean(length_data["attention_noise"]))
+            # Remove raw lists
+            del length_data["attention_to_answer"]
+            del length_data["attention_noise"]
+        
+        # Save final results
+        output_filename = f"attention_results_{int(time.time())}.json"
+        if FLAGS.output_file.startswith('gs://'):
+            with fs.open(output_filename, 'w') as f:
+                json.dump(results, f, indent=2)
         else:
-            with open(stats_filename, 'w', encoding='utf-8') as f:
-                json.dump(stats_output, f, ensure_ascii=False, indent=2)
-
-        print(f'\nAccuracy stats written to {stats_filename}')
-
-
+            with open(output_filename, 'w') as f:
+                json.dump(results, f, indent=2)
+        
+        print(f"Results saved to {output_filename}")
+        return results
+    
+    
 
     def print_start_test_summary(self):
         print ("\n")

@@ -18,11 +18,11 @@ python3 -u scripts/eval_needle_multi.py \
     --max_tokens_per_batch=5000 \
     --output_file="$output_file" \
     --haystack_file="$haystack_file" \
-    --context_lengths_min=1000 \
-    --context_lengths_max=8000 \
-    --n_context_length_intervals=8 \
+    --context_lengths_min=4000 \
+    --context_lengths_max=4000 \
+    --n_context_length_intervals=1 \
     --n_document_depth_intervals=5 \
-    --n_needles_total=8 \
+    --n_needles_total=5 \
     --n_needles_retrieve=1 \
-    --n_rounds=3
+    --n_rounds=5
 read
