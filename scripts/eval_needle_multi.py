@@ -500,7 +500,7 @@ class LLMNeedleHaystackTester:
         
         # Temporarily enable attention output
         original_output_attentions = getattr(model.model.config, 'output_attentions', False)
-        model.config.output_attentions = True
+        model.model.config.output_attentions = True
         
         attention_matrix = None
         
