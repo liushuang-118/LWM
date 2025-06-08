@@ -475,6 +475,8 @@ class LLMNeedleHaystackTester:
                 
                 # Create context
                 context = self.create_contexts(needles_info, random_cities_retrieve, trim_contexts[i], context_length, i)
+                context['retrieval_needles'] = context['cities_to_retrieve']
+                context['all_needles'] = list(context['needles_info'].keys())
                 print(context)
                 prompt = template.format(context=context['context'], question=context['question'])
                 
@@ -486,27 +488,34 @@ class LLMNeedleHaystackTester:
                     print("None-----------------------")
 
                 # Analyze attention patterns
-                answer_tokens = self.enc.encode(" ".join(context['answer']))
-                answer_positions = []
-                for token in answer_tokens:
-                    answer_positions.extend([i for i, t in enumerate(tokens) if t == token])
-                answer_positions = list(set(answer_positions))
+                all_needle_tokens = self.enc.encode(" ".join(context['all_needles']))
+                retrieval_tokens = self.enc.encode(" ".join(context['retrieval_needles']))
+
+                # 找出所有 needle 的位置
+                all_needle_positions = []
+                for token in all_needle_tokens:
+                    all_needle_positions.extend([i for i, t in enumerate(tokens) if t == token])
+                all_needle_positions = list(set(all_needle_positions))
+
+                # 找出 retrieval needles 的位置
+                retrieval_positions = []
+                for token in retrieval_tokens:
+                    retrieval_positions.extend([i for i, t in enumerate(tokens) if t == token])
+                retrieval_positions = list(set(retrieval_positions))
+
+                # 干扰 needle = 所有 needle - retrieval needle
+                noise_positions = list(set(all_needle_positions) - set(retrieval_positions))
 
                 # Calculate attention metrics
-                if answer_positions:
-                    # 每个query token对答案tokens的attention之和，shape=(num_query_tokens,)
-                    attention_to_answer_per_query = np.sum(attention_matrix[:, answer_positions], axis=1)
+                if retrieval_positions:
+                    attention_to_answer_per_query = np.sum(attention_matrix[:, retrieval_positions], axis=1)
+                    attention_noise_per_query = np.sum(attention_matrix[:, noise_positions], axis=1)
 
-                    # attention_to_answer：所有query token的平均attention
                     attention_to_answer = np.mean(attention_to_answer_per_query)
-
-                    # attention_noise：每个query token对非答案tokens的attention之和，平均值
-                    attention_noise_per_query = 1.0 - attention_to_answer_per_query  # assuming rows sum to 1
                     attention_noise = np.mean(attention_noise_per_query)
                 else:
-                    # 如果没有答案tokens，设为0或者均匀分布
                     attention_to_answer = 0.0
-                    attention_noise = 1.0  # 注意力全部是噪声
+                    attention_noise = 1.0  # 没有 retrieval needle，则全是噪声
 
                 # Store raw result
                 raw_result = {
