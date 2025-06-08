@@ -594,7 +594,7 @@ class LLMNeedleHaystackTester:
         finally:
             for hook in hooks:
                 hook.remove()
-            model.config.output_attentions = original_output_attentions
+            model.model.config.output_attentions = original_output_attentions
         
         # Final metadata update
         metadata['layer_idx'] = layer_idx
