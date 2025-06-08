@@ -161,6 +161,7 @@ class LLMNeedleHaystackTester:
             'needles_info': needles_info,
             'question' : question,
             'cities_to_retrieve' : random_cities_retrieve,
+            'answer': [needles_info[city][0] for city in random_cities_retrieve],
             'seed': seed,
          }
         return results
